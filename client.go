@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+//GameData represents data received from server
 type GameData struct {
 	GameID   string
 	FieldX   int
@@ -31,28 +31,16 @@ type Cell struct {
 	Field  string
 }
 
+/*Requests to be sent:
+GET 	http://sb.mailboxly.info/?gameid=AA22DD5511	-request to get data about game AA22DD5511
+GET		http://sb.mailboxly.info/					-(???) request to get IDs of all current games
+POST	http://sb.mailboxly.info/					-request to create new game room
+PUT		http://sb.mailboxly.info/?gameid=AA22DD5511	-request to edit data in game AA22DD5511
+*/
+
 func main() {
-	var gameData GameData
-
-	response, err := http.Get("http://sb.mailboxly.info/?gameid=AA22DD5511")
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	jsonStr, err := io.ReadAll(response.Body)
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	err = json.Unmarshal([]byte(jsonStr), &gameData)
-	if err != nil {
-		fmt.Println(err)
-	}
-
 	initGUI()
 }
-
-/////////////////////////////////////////////////////////////////////////////
 
 func initGUI() {
 
@@ -63,19 +51,43 @@ func initGUI() {
 	window.ShowAndRun()
 }
 
-func newMainContainer(window fyne.Window) {
-	var mainContainer *fyne.Container
+//Realizes 'method' request and returns response as []byte type
+func sendRequest(method string, uri string) []byte {
+	response, err := http.Get(uri)
+	if err != nil {
+		fmt.Println(err)
+	}
 
+	json, err := io.ReadAll(response.Body)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	return json
+}
+
+//Initializes new main container, which contains player's nickname (for yet) and 'Start game' button
+//which sends all registration info to server to create a new game room
+func newMainContainer(window fyne.Window) {
 	usernameLabel := widget.NewLabel("Username: ")
 	usernameEntry := widget.NewEntry()
 	usernameRow := container.NewGridWithRows(2, usernameLabel, usernameEntry)
 
+	//When the button is clicked, it sends POST request to create new game room
 	startGameButton := widget.NewButton("Start game", func() {
+		//var gameData GameData
+		//response := sendRequest("POST", "http://sb.mailboxly.info")
+		//err := json.Unmarshal(response, &gameData)
+		//if err == nil {
+		//	fmt.Println(err)
+		//} else {
+		//	newGameContainer(window, gameData)
+		//}
 		newGameContainer(window)
 	})
 	startGameButton.Resize(fyne.NewSize(150, 50))
 
-	mainContainer = container.NewWithoutLayout(usernameRow, startGameButton)
+	mainContainer := container.NewWithoutLayout(usernameRow, startGameButton)
 
 	mainContainer.Resize(fyne.NewSize(700, 500))
 
@@ -86,10 +98,12 @@ func newMainContainer(window fyne.Window) {
 	window.SetContent(mainContainer)
 }
 
+//Initializes new game container, which contains game details: both user and bot field,
+//'End game' button (for yet), to close current game and open new main container
 func newGameContainer(window fyne.Window) {
+	//Size of cell fields depends on size of window
 	fieldSize := window.Canvas().Size().Width/2 - 75
 
-	//Fields for game stage
 	userContainer := container.NewAdaptiveGrid(10)
 	botContainer := container.NewAdaptiveGrid(10)
 
@@ -98,6 +112,7 @@ func newGameContainer(window fyne.Window) {
 	userContainer.Resize(fyne.NewSize(fieldSize, fieldSize))
 	botContainer.Resize(fyne.NewSize(fieldSize, fieldSize))
 
+	//Setting cells in both user and bot fields
 	setButtons(userContainer, "user")
 	setButtons(botContainer, "bot")
 
