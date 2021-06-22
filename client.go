@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,9 +53,27 @@ func initGUI() {
 	window.ShowAndRun()
 }
 
-//Realizes 'method' request and returns response as []byte type
-func sendRequest(method string, uri string) []byte {
-	response, err := http.Get(uri)
+//Creates and sends new 'method' request to 'uri'. If used to create GET request dataToSend should
+//be NIL, because GET request requires no data to send. Method returns not unmarshaled response body,
+//so it means to use json.Unmarshal() next to sendRequest()
+func sendRequest(method string, uri string, dataToSend []byte) []byte {
+	client := &http.Client{}
+	var err error
+	var request *http.Request
+	var response *http.Response
+
+	request, err = http.NewRequest(method, uri, bytes.NewBuffer(dataToSend))
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	//Separate method GET because it is the only method that requires no data to send, but only uri
+	if method == "GET" {
+		response, err = client.Get(uri)
+	} else {
+		response, err = client.Do(request)
+	}
+
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -78,7 +97,7 @@ func newMainContainer(window fyne.Window) {
 	startGameButton := widget.NewButton("Start game", func() {
 		var gameData GameData
 		//response := sendRequest("POST", "http://sb.mailboxly.info")
-		response := sendRequest("GET", "http://sb.mailboxly.info/?gameid=AA22DD5511")
+		response := sendRequest("GET", "http://sb.mailboxly.info/?gameid=AA22DD5511", nil)
 		err := json.Unmarshal([]byte(response), &gameData)
 		if err != nil {
 			fmt.Println(err)
@@ -102,7 +121,6 @@ func newMainContainer(window fyne.Window) {
 
 //Initializes new game container, which contains game details: both user and bot field,
 //'End game' button (for yet), to close current game and open new main container
-//func newGameContainer(window fyne.Window) {
 func newGameContainer(window fyne.Window, gameData GameData) {
 	//Size of cell fields depends on size of window
 	fieldSize := window.Canvas().Size().Width/2 - 75
@@ -162,7 +180,6 @@ func newWindow() fyne.Window {
 }
 
 //Sets cells on container. Parameter 'field' determines on which field cells should be set
-//func setButtons(container *fyne.Container, fieldName string) {
 func setButtons(container *fyne.Container, fieldName string) [5][5]Cell {
 	var cellArray [5][5]Cell = [5][5]Cell{}
 
@@ -175,7 +192,22 @@ func setButtons(container *fyne.Container, fieldName string) [5][5]Cell {
 				Y:     y,
 				Field: fieldName,
 			}
-			cell.Button = widget.NewButton("", cell.cellTapHandler())
+
+			cell.Button = widget.NewButton("", func() {
+				fmt.Println(
+					cell.Field,
+					cell.X,
+					cell.Y)
+
+				//Marshalling cell's coordinates into dataToSend (type []byte)
+				/*dataToSend, err := json.Marshal([]int{cell.X, cell.Y}) //may have problems
+				if err != nil {
+					fmt.Println(err)
+				}
+				rawData := sendRequest("PUT", "http://sb.mailboxly.info/?gameid=AA22DD5511", dataToSend)
+				//Unmarshal received data from PUT request
+				*/
+			})
 
 			container.Add(cell.Button)
 			cellArray[x][y] = cell
@@ -185,6 +217,7 @@ func setButtons(container *fyne.Container, fieldName string) [5][5]Cell {
 	return cellArray
 }
 
+//Updates text in cell.Button and refreshes parent container
 func updateCells(cellArray [5][5]Cell, field [][]int, cont *fyne.Container) {
 	for x := 0; x < 5; x++ {
 		for y := 0; y < 5; y++ {
@@ -192,11 +225,4 @@ func updateCells(cellArray [5][5]Cell, field [][]int, cont *fyne.Container) {
 		}
 	}
 	cont.Refresh()
-}
-
-//Handles a click on cell when game stage is active
-func (cell Cell) cellTapHandler() func() {
-	return func() {
-		fmt.Println(cell.Field, ":", cell.X, cell.Y)
-	}
 }
