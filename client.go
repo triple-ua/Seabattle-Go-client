@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -75,15 +76,15 @@ func newMainContainer(window fyne.Window) {
 
 	//When the button is clicked, it sends POST request to create new game room
 	startGameButton := widget.NewButton("Start game", func() {
-		//var gameData GameData
+		var gameData GameData
 		//response := sendRequest("POST", "http://sb.mailboxly.info")
-		//err := json.Unmarshal(response, &gameData)
-		//if err == nil {
-		//	fmt.Println(err)
-		//} else {
-		//	newGameContainer(window, gameData)
-		//}
-		newGameContainer(window)
+		response := sendRequest("GET", "http://sb.mailboxly.info/?gameid=AA22DD5511")
+		err := json.Unmarshal([]byte(response), &gameData)
+		if err != nil {
+			fmt.Println(err)
+		} else {
+			newGameContainer(window, gameData)
+		}
 	})
 	startGameButton.Resize(fyne.NewSize(150, 50))
 
@@ -96,25 +97,37 @@ func newMainContainer(window fyne.Window) {
 	startGameButton.Move(fyne.NewPos(verticalCenter-startGameButton.Size().Width/2, mainContainer.Size().Height-80))
 
 	window.SetContent(mainContainer)
+	window.SetTitle("Seabattle")
 }
 
 //Initializes new game container, which contains game details: both user and bot field,
 //'End game' button (for yet), to close current game and open new main container
-func newGameContainer(window fyne.Window) {
+//func newGameContainer(window fyne.Window) {
+func newGameContainer(window fyne.Window, gameData GameData) {
 	//Size of cell fields depends on size of window
 	fieldSize := window.Canvas().Size().Width/2 - 75
 
-	userContainer := container.NewAdaptiveGrid(10)
-	botContainer := container.NewAdaptiveGrid(10)
+	//userContainer := container.NewAdaptiveGrid(10)
+	//botContainer := container.NewAdaptiveGrid(10)
+	userContainer := container.NewAdaptiveGrid(5)
+	botContainer := container.NewAdaptiveGrid(5)
 
-	userContainer.Move(fyne.NewPos(50, 50))
-	botContainer.Move(fyne.NewPos(fieldSize+100, 50))
+	userContainer.Move(fyne.NewPos(50, 80))
+	botContainer.Move(fyne.NewPos(fieldSize+100, 80))
 	userContainer.Resize(fyne.NewSize(fieldSize, fieldSize))
 	botContainer.Resize(fyne.NewSize(fieldSize, fieldSize))
 
+	player1Label := widget.NewLabel(gameData.Player1 + "'s field:")
+	player2Label := widget.NewLabel(gameData.Player2 + "'s field:")
+	player1Label.Move(fyne.NewPos(50, 30))
+	player2Label.Move(fyne.NewPos(fieldSize+100, 30))
+
 	//Setting cells in both user and bot fields
-	setButtons(userContainer, "user")
-	setButtons(botContainer, "bot")
+	userCellArray := setButtons(userContainer, "user")
+	botCellArray := setButtons(botContainer, "bot")
+
+	updateCells(userCellArray, gameData.P1Field, userContainer)
+	updateCells(botCellArray, gameData.P2Field, botContainer)
 
 	endGameButton := widget.NewButton("End game", func() {
 		newMainContainer(window)
@@ -123,6 +136,8 @@ func newGameContainer(window fyne.Window) {
 	endGameButton.Resize(fyne.NewSize(100, 50))
 
 	gameContainer := container.NewWithoutLayout(
+		player1Label,
+		player2Label,
 		userContainer,
 		botContainer,
 		endGameButton,
@@ -130,6 +145,8 @@ func newGameContainer(window fyne.Window) {
 
 	//Adding containers to window
 	window.SetContent(gameContainer)
+
+	window.SetTitle("Seabattle: Game ID: " + gameData.GameID)
 }
 
 //Sets a new window
@@ -145,19 +162,36 @@ func newWindow() fyne.Window {
 }
 
 //Sets cells on container. Parameter 'field' determines on which field cells should be set
-func setButtons(container *fyne.Container, field string) {
-	for x := 0; x < 10; x++ {
-		for y := 0; y < 10; y++ {
+//func setButtons(container *fyne.Container, fieldName string) {
+func setButtons(container *fyne.Container, fieldName string) [5][5]Cell {
+	var cellArray [5][5]Cell = [5][5]Cell{}
+
+	//for x := 0; x < 10; x++ {
+	for x := 0; x < 5; x++ {
+		//for y := 0; y < 10; y++ {
+		for y := 0; y < 5; y++ {
 			cell := Cell{
 				X:     x,
 				Y:     y,
-				Field: field,
+				Field: fieldName,
 			}
-			cell.Button = widget.NewButton("0", cell.cellTapHandler())
+			cell.Button = widget.NewButton("", cell.cellTapHandler())
 
 			container.Add(cell.Button)
+			cellArray[x][y] = cell
 		}
 	}
+
+	return cellArray
+}
+
+func updateCells(cellArray [5][5]Cell, field [][]int, cont *fyne.Container) {
+	for x := 0; x < 5; x++ {
+		for y := 0; y < 5; y++ {
+			cellArray[x][y].Button.Text = fmt.Sprintf("%d", field[x][y])
+		}
+	}
+	cont.Refresh()
 }
 
 //Handles a click on cell when game stage is active
