@@ -28,7 +28,20 @@ type Cell struct {
 	Button *widget.Button
 	X      int
 	Y      int
-	Field  string
+}
+
+type NumberOfShips struct {
+	SingleDeck int
+	DoubleDeck int
+	ThreeDeck  int
+	FourDeck   int
+	TotalDecks int
+}
+
+type Ship struct {
+	Size             int
+	Orientation      string
+	BaseDeckPosition [2]int //position of top/left corner of ship
 }
 
 /*Requests to be sent:
@@ -87,35 +100,60 @@ func sendRequest(method string, uri string, dataToSend []byte) []byte {
 //Initializes new main container, which contains player's nickname (for yet) and 'Start game' button
 //which sends all registration info to server to create a new game room
 func newMainContainer(window fyne.Window) {
+	var gameData GameData
+	var shipsArray NumberOfShips
+
 	usernameLabel := widget.NewLabel("Username: ")
 	usernameEntry := widget.NewEntry()
 	usernameRow := container.NewGridWithRows(2, usernameLabel, usernameEntry)
 
 	userContainer := container.NewAdaptiveGrid(10)
 	userContainer.Resize(fyne.NewSize(250, 250))
-	userCellArray := setButtons(userContainer, "user")
+
+	shipsRadioGroup := widget.NewRadioGroup(
+		[]string{"Single-deck ship", "Double-deck ship", "Three-deck ship", "Four-deck ship"},
+		func(s string) {})
+	shipsOrientation := widget.NewRadioGroup(
+		[]string{"Horizontal", "Vertical"}, func(s string) {})
+	shipsRadioGroup.SetSelected("Four-deck ship")
+	shipsOrientation.SetSelected("Vertical")
+	shipsContainer := container.NewVBox(shipsRadioGroup, widget.NewSeparator(), shipsOrientation)
+
+	userCellArray := setButtons(userContainer, "putShip", [10][10]string{})
 
 	//When the button is clicked, it sends POST request to create new game room
 	startGameButton := widget.NewButton("Start game", func() {
-		var gameData GameData
-		//response := sendRequest("GET", "http://localhost:8080/?gameid=AA22DD5511", nil)
-		response := sendRequest("GET", "http://sb.mailboxly.info:8081/?gameid=AA22DD5511", nil)
-		err := json.Unmarshal([]byte(response), &gameData)
-		if err != nil {
-			fmt.Println(err)
+		if shipsArray.TotalDecks == 20 {
+			//response := sendRequest("GET", "http://localhost:8080/?gameid=AA22DD5511", nil)
+			response := sendRequest("GET", "http://localhost:8080/game", nil)
+			err := json.Unmarshal([]byte(response), &gameData)
+
+			if err != nil {
+				fmt.Println(err)
+			} else {
+				var buttonValuesArray [10][10]string
+				for x := 0; x < 10; x++ {
+					for y := 0; y < 10; y++ {
+						buttonValuesArray[x][y] = userCellArray[x][y].Button.Text
+					}
+				}
+
+				newGameContainer(window, gameData, buttonValuesArray)
+			}
 		} else {
-			newGameContainer(window, gameData, userContainer, userCellArray)
+			fmt.Println("Your ships set uncorrectly")
 		}
 	})
 	startGameButton.Resize(fyne.NewSize(150, 50))
 
-	mainContainer := container.NewWithoutLayout(usernameRow, userContainer, startGameButton)
+	mainContainer := container.NewWithoutLayout(usernameRow, userContainer, startGameButton, shipsContainer)
 	mainContainer.Resize(fyne.NewSize(700, 500))
 
 	verticalCenter := mainContainer.Size().Width / 2
 	usernameRow.Move(fyne.NewPos(verticalCenter-usernameRow.Size().Width/2, 30))
-	startGameButton.Move(fyne.NewPos(verticalCenter-startGameButton.Size().Width/2, mainContainer.Size().Height-100))
 	userContainer.Move(fyne.NewPos(verticalCenter-userContainer.Size().Width/2, 130))
+	startGameButton.Move(fyne.NewPos(verticalCenter-startGameButton.Size().Width/2, mainContainer.Size().Height-100))
+	shipsContainer.Move(fyne.NewPos(30, userContainer.Position().Y))
 
 	window.SetContent(mainContainer)
 	window.SetTitle("Sea Battle")
@@ -123,13 +161,11 @@ func newMainContainer(window fyne.Window) {
 
 //Initializes new game container, which contains game details: both user and bot field,
 //'End game' button (for yet), to close current game and open new main container
-func newGameContainer(window fyne.Window, gameData GameData, userContainer *fyne.Container, userCellArray [10][10]Cell) {
+func newGameContainer(window fyne.Window, gameData GameData, buttonValuesArray [10][10]string) {
 	//Size of cell fields depends on size of window
 	fieldSize := window.Canvas().Size().Width/2 - 75
 
-	//userContainer := container.NewAdaptiveGrid(10)
-	//botContainer := container.NewAdaptiveGrid(10)
-	//userContainer := container.NewAdaptiveGrid(5)
+	userContainer := container.NewAdaptiveGrid(10)
 	botContainer := container.NewAdaptiveGrid(10)
 
 	userContainer.Move(fyne.NewPos(50, 80))
@@ -142,12 +178,10 @@ func newGameContainer(window fyne.Window, gameData GameData, userContainer *fyne
 	player1Label.Move(fyne.NewPos(50, 30))
 	player2Label.Move(fyne.NewPos(fieldSize+100, 30))
 
-	//Setting cells in both user and bot fields
-	//userCellArray := setButtons(userContainer, "user")
-	botCellArray := setButtons(botContainer, "bot")
-
-	updateCells(userCellArray, gameData.P1Field, userContainer)
-	updateCells(botCellArray, gameData.P2Field, botContainer)
+	//Setting cells in fields
+	userCellArray := setButtons(userContainer, "", buttonValuesArray)
+	botCellArray := setButtons(botContainer, "shoot", [10][10]string{})
+	fmt.Sprintf("%s", botCellArray, userCellArray)
 
 	endGameButton := widget.NewButton("End game", func() {
 		newMainContainer(window)
@@ -182,33 +216,45 @@ func newWindow() fyne.Window {
 }
 
 //Sets cells on container. Parameter 'field' determines on which field cells should be set
-func setButtons(container *fyne.Container, fieldName string) [10][10]Cell {
+func setButtons(container *fyne.Container, listener string, initTextValues [10][10]string) [10][10]Cell {
 	var cellArray [10][10]Cell = [10][10]Cell{}
 
 	for x := 0; x < 10; x++ {
 		for y := 0; y < 10; y++ {
 			cell := Cell{
-				X:     x,
-				Y:     y,
-				Field: fieldName,
+				X: x,
+				Y: y,
 			}
 
-			cell.Button = widget.NewButton("", func() {
-				cell.putShip(cellArray)
-				//Marshalling cell's coordinates into dataToSend (type []byte)
-				/*dataToSend, err := json.Marshal([]int{cell.X, cell.Y}) //may have problems
-				if err != nil {
-					fmt.Println(err)
+			cell.Button = widget.NewButton(initTextValues[x][y], func() {
+				switch listener {
+				case "putShip":
+					cell.putShip(cellArray)
+					container.Refresh()
+				case "shoot":
+					//PUT request
 				}
-				rawData := sendRequest("PUT", "http://sb.mailboxly.info/?gameid=AA22DD5511", dataToSend)
-				//Unmarshal received data from PUT request
-				*/
 			})
+
+			/*if cell.ParentName == "user" {
+				cell.putShip(cellArray)
+			} else if cell.ParentName == "bot" {
+				fmt.Println("PUT request here")
+			}*/
+
+			/*//Marshalling cell's coordinates into dataToSend (type []byte)
+			dataToSend, err := json.Marshal([]int{cell.X, cell.Y}) //may have problems
+			if err != nil {
+				fmt.Println(err)
+			}
+			rawData := sendRequest("PUT", "http://sb.mailboxly.info/?gameid=AA22DD5511", dataToSend)
+			//Unmarshal received data from PUT request*/
 
 			container.Add(cell.Button)
 			cellArray[x][y] = cell
 		}
 	}
+
 	return cellArray
 }
 
@@ -226,8 +272,44 @@ func (cell Cell) putShip(cellArray [10][10]Cell) {
 		return
 
 	} else {
-		cell.Button.Text = "O"
+		drawShip(newShip("Horizontal", "Three-deck ship", cell), &cellArray)
 	}
+}
+
+//Draws a ship in cell array
+func drawShip(ship Ship, cellArray *[10][10]Cell) {
+	x := ship.BaseDeckPosition[0]
+	y := ship.BaseDeckPosition[1]
+
+	for i := 0; i < ship.Size; i++ {
+		switch ship.Orientation {
+		case "Horizontal":
+			cellArray[x][y+i].Button.Text = "O"
+		case "Vertical":
+			cellArray[x+i][y].Button.Text = "O"
+		}
+	}
+}
+
+//Creates new ship with given parameter
+func newShip(orientation string, size string, cell Cell) Ship {
+	var ship Ship
+
+	switch size {
+	case "Single-deck ship":
+		ship.Size = 1
+	case "Double-deck ship":
+		ship.Size = 2
+	case "Three-deck ship":
+		ship.Size = 3
+	case "Four-deck ship":
+		ship.Size = 4
+	}
+
+	ship.BaseDeckPosition = [2]int{cell.X, cell.Y}
+	ship.Orientation = orientation
+
+	return ship
 }
 
 //Validation method. Returns true if corners are clear, and false if corners aren't
@@ -238,6 +320,7 @@ func (cell Cell) checkIfCornersAreClear(cellArray [10][10]Cell) bool {
 		if x == 0 {
 			continue
 		}
+
 		for y := -1; y <= 1; y++ {
 
 			//skipping y==0, because method requires only -1 and 1 values
@@ -265,14 +348,4 @@ func (cell Cell) checkIfCornersAreClear(cellArray [10][10]Cell) bool {
 	}
 
 	return true
-}
-
-//Updates text in cell.Button and refreshes parent container
-func updateCells(cellArray [10][10]Cell, field [][]int, cont *fyne.Container) {
-	for x := 0; x < 10; x++ {
-		for y := 0; y < 10; y++ {
-			cellArray[x][y].Button.Text = fmt.Sprintf("%d", field[x][y])
-		}
-	}
-	cont.Refresh()
 }
