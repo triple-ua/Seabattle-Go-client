@@ -30,18 +30,16 @@ type Cell struct {
 	Y      int
 }
 
-type NumberOfShips struct {
-	SingleDeck int
-	DoubleDeck int
-	ThreeDeck  int
-	FourDeck   int
-	TotalDecks int
-}
-
 type Ship struct {
 	Size             int
 	Orientation      string
 	BaseDeckPosition [2]int //position of top/left corner of ship
+}
+
+type Fleet struct {
+	TotalDecks int
+	Size       map[string]int
+	Array      []Ship
 }
 
 /*Requests to be sent:
@@ -101,7 +99,9 @@ func sendRequest(method string, uri string, dataToSend []byte) []byte {
 //which sends all registration info to server to create a new game room
 func newMainContainer(window fyne.Window) {
 	var gameData GameData
-	var shipsArray NumberOfShips
+	var fleet Fleet = Fleet{
+		Size: make(map[string]int, 4),
+	}
 
 	usernameLabel := widget.NewLabel("Username: ")
 	usernameEntry := widget.NewEntry()
@@ -119,11 +119,11 @@ func newMainContainer(window fyne.Window) {
 	shipsOrientation.SetSelected("Vertical")
 	shipsContainer := container.NewVBox(shipsRadioGroup, widget.NewSeparator(), shipsOrientation)
 
-	userCellArray := setButtons(userContainer, "putShip", [10][10]string{})
+	userCellArray := setButtons(userContainer, "putShip", [10][10]string{}, &fleet)
 
 	//When the button is clicked, it sends POST request to create new game room
 	startGameButton := widget.NewButton("Start game", func() {
-		if shipsArray.TotalDecks == 20 {
+		if fleet.TotalDecks == 20 {
 			//response := sendRequest("GET", "http://localhost:8080/?gameid=AA22DD5511", nil)
 			response := sendRequest("GET", "http://localhost:8080/game", nil)
 			err := json.Unmarshal([]byte(response), &gameData)
@@ -179,9 +179,9 @@ func newGameContainer(window fyne.Window, gameData GameData, buttonValuesArray [
 	player2Label.Move(fyne.NewPos(fieldSize+100, 30))
 
 	//Setting cells in fields
-	userCellArray := setButtons(userContainer, "", buttonValuesArray)
-	botCellArray := setButtons(botContainer, "shoot", [10][10]string{})
-	fmt.Sprintf("%s", botCellArray, userCellArray)
+	//userCellArray := setButtons(userContainer, "", buttonValuesArray)
+	//botCellArray := setButtons(botContainer, "shoot", [10][10]string{})
+	//fmt.Sprintf("%s", botCellArray, userCellArray)
 
 	endGameButton := widget.NewButton("End game", func() {
 		newMainContainer(window)
@@ -216,7 +216,8 @@ func newWindow() fyne.Window {
 }
 
 //Sets cells on container. Parameter 'field' determines on which field cells should be set
-func setButtons(container *fyne.Container, listener string, initTextValues [10][10]string) [10][10]Cell {
+//func setButtons(container *fyne.Container, handler func(), initTextValues [10][10]string) [10][10]Cell {
+func setButtons(container *fyne.Container, listener string, initTextValues [10][10]string, fleet *Fleet) [10][10]Cell {
 	var cellArray [10][10]Cell = [10][10]Cell{}
 
 	for x := 0; x < 10; x++ {
@@ -229,18 +230,12 @@ func setButtons(container *fyne.Container, listener string, initTextValues [10][
 			cell.Button = widget.NewButton(initTextValues[x][y], func() {
 				switch listener {
 				case "putShip":
-					cell.putShip(cellArray)
+					putShip(&cellArray, cell, fleet)
 					container.Refresh()
 				case "shoot":
 					//PUT request
 				}
 			})
-
-			/*if cell.ParentName == "user" {
-				cell.putShip(cellArray)
-			} else if cell.ParentName == "bot" {
-				fmt.Println("PUT request here")
-			}*/
 
 			/*//Marshalling cell's coordinates into dataToSend (type []byte)
 			dataToSend, err := json.Marshal([]int{cell.X, cell.Y}) //may have problems
@@ -259,20 +254,73 @@ func setButtons(container *fyne.Container, listener string, initTextValues [10][
 }
 
 //Puts a piece of ship in pressed cell if this cell is valid
-func (cell Cell) putShip(cellArray [10][10]Cell) {
-	//clear if pressed button have "O" text
+func putShip(cellArray *[10][10]Cell, cell Cell, fleet *Fleet) {
+	//delete ship if pressed cell is BaseDeck (left/top piece of ship)
+	//if pressed cell have "O" text but it is not BaseDeck, call will be ignored
 	if cell.Button.Text == "O" {
-		cell.Button.Text = ""
+		eraseShip(cell, cellArray, fleet)
 		return
 
-		//check if corners around pressed cell are clear
-		//if branch - corners aren't clear; terminate method
-		//else branch - corners are clear; next validation stage
-	} else if !cell.checkIfCornersAreClear(cellArray) {
+		//check if cells around pressed cell are clear
+		//if branch - cells aren't clear; terminate method
+		//else branch - cells are clear; next validation stage
+	} else if !cell.cellsAroundAreClear(cellArray) {
+		return
+
+		//check if supposed ship colliding something
+		//if branch - ship collided something; terminate method
+		//else branch - cell around supposed ship are clear; next validation stage
+	} else if cell.shipCollided(cellArray, "Three-deck ship", "Horizontal") {
 		return
 
 	} else {
-		drawShip(newShip("Horizontal", "Three-deck ship", cell), &cellArray)
+		drawShip(newShip("Horizontal", "Three-deck ship", cell, fleet), cellArray)
+		fmt.Println("\n", fleet.Size)
+		fmt.Println(fleet.Array)
+		fmt.Println(fleet.TotalDecks)
+	}
+}
+
+//Deletes ship from both field and Fleet struct
+func eraseShip(cell Cell, cellArray *[10][10]Cell, fleet *Fleet) {
+	x := cell.X
+	y := cell.Y
+
+	for _, ship := range fleet.Array {
+		if ship.BaseDeckPosition[0] == x && ship.BaseDeckPosition[1] == y {
+			switch ship.Size {
+			case 1:
+				fleet.Size["Single-deck ship"] -= 1
+			case 2:
+				fleet.Size["Double-deck ship"] -= 1
+			case 3:
+				fleet.Size["Three-deck ship"] -= 1
+			case 4:
+				fleet.Size["Four-deck ship"] -= 1
+			}
+
+			fleet.TotalDecks -= ship.Size
+
+			for i := 0; i < ship.Size; i++ {
+				switch ship.Orientation {
+				case "Vertical":
+					cellArray[x+i][y].Button.Text = ""
+				case "Horizontal":
+					cellArray[x][y+i].Button.Text = ""
+				}
+			}
+
+			//Removing ship from slice
+			shipArrayCopy := fleet.Array
+			fleet.Array = nil
+			for _, s := range shipArrayCopy {
+				if s != ship {
+					fleet.Array = append(fleet.Array, s)
+				}
+			}
+
+			break
+		}
 	}
 }
 
@@ -292,7 +340,7 @@ func drawShip(ship Ship, cellArray *[10][10]Cell) {
 }
 
 //Creates new ship with given parameter
-func newShip(orientation string, size string, cell Cell) Ship {
+func newShip(orientation string, size string, cell Cell, fleet *Fleet) Ship {
 	var ship Ship
 
 	switch size {
@@ -309,25 +357,17 @@ func newShip(orientation string, size string, cell Cell) Ship {
 	ship.BaseDeckPosition = [2]int{cell.X, cell.Y}
 	ship.Orientation = orientation
 
+	fleet.Size[size] += 1
+	fleet.TotalDecks += ship.Size
+	fleet.Array = append(fleet.Array, ship)
+
 	return ship
 }
 
-//Validation method. Returns true if corners are clear, and false if corners aren't
-func (cell Cell) checkIfCornersAreClear(cellArray [10][10]Cell) bool {
+//Validation method. Returns true if cells around hit cell are clear, and false if cells aren't
+func (cell Cell) cellsAroundAreClear(cellArray *[10][10]Cell) bool {
 	for x := -1; x <= 1; x++ {
-
-		//skipping x==0, because method requires only -1 and 1 values
-		if x == 0 {
-			continue
-		}
-
 		for y := -1; y <= 1; y++ {
-
-			//skipping y==0, because method requires only -1 and 1 values
-			if y == 0 {
-				continue
-			}
-
 			//going to next iteration if cell.X is 0 or 9
 			//to get rid of index out of range exception
 			if cell.X == 0 && x == -1 || cell.X == 9 && x == 1 {
@@ -348,4 +388,31 @@ func (cell Cell) checkIfCornersAreClear(cellArray [10][10]Cell) bool {
 	}
 
 	return true
+}
+
+//Validation method. Returns true if ship collided something, and false if ship not
+func (cell Cell) shipCollided(cellArray *[10][10]Cell, shipSize string, shipOrientation string) bool {
+	var size int
+
+	switch shipSize {
+	case "Single-deck ship":
+		size = 1
+	case "Double-deck ship":
+		size = 2
+	case "Three-deck ship":
+		size = 3
+	case "Four-deck ship":
+		size = 4
+	}
+
+	var validationResult bool
+	for i := 1; i < size; i++ {
+		if shipOrientation == "Vertical" {
+			validationResult = cellArray[cell.X+i][cell.Y].cellsAroundAreClear(cellArray)
+		} else if shipOrientation == "Horizontal" {
+			validationResult = cellArray[cell.X][cell.Y+i].cellsAroundAreClear(cellArray)
+		}
+	}
+
+	return false || !validationResult
 }
