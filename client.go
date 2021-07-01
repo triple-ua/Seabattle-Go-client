@@ -114,7 +114,8 @@ func newMainContainer(window fyne.Window) {
 		[]string{"Single-deck ship", "Double-deck ship", "Three-deck ship", "Four-deck ship"},
 		func(s string) {})
 	shipsOrientation := widget.NewRadioGroup(
-		[]string{"Horizontal", "Vertical"}, func(s string) {})
+		[]string{"Horizontal", "Vertical"},
+		func(s string) {})
 	shipsRadioGroup.SetSelected("Four-deck ship")
 	shipsOrientation.SetSelected("Vertical")
 	shipsContainer := container.NewVBox(shipsRadioGroup, widget.NewSeparator(), shipsOrientation)
@@ -255,29 +256,28 @@ func setButtons(container *fyne.Container, listener string, initTextValues [10][
 
 //Puts a piece of ship in pressed cell if this cell is valid
 func putShip(cellArray *[10][10]Cell, cell Cell, fleet *Fleet) {
-	//delete ship if pressed cell is BaseDeck (left/top piece of ship)
-	//if pressed cell have "O" text but it is not BaseDeck, call will be ignored
-	if cell.Button.Text == "O" {
-		eraseShip(cell, cellArray, fleet)
-		return
 
-		//check if cells around pressed cell are clear
-		//if branch - cells aren't clear; terminate method
-		//else branch - cells are clear; next validation stage
-	} else if !cell.cellsAroundAreClear(cellArray) {
+	//delete ship if pressed cell is BaseDeck (left/top piece of ship)
+	//if pressed cell have "#" text but it is not BaseDeck, call will be ignored
+	if cell.Button.Text == "^" || cell.Button.Text == "<" {
+		eraseShip(cell, cellArray, fleet)
 		return
 
 		//check if supposed ship colliding something
 		//if branch - ship collided something; terminate method
 		//else branch - cell around supposed ship are clear; next validation stage
-	} else if cell.shipCollided(cellArray, "Three-deck ship", "Horizontal") {
+	} else if !cell.shipCollision(cellArray, "Single-deck ship", "Horizontal") {
 		return
 
+		//check if fleet have free space for supposed ship
+		//if branch - there aren't free space; terminate method
+		//else branch - there free space; ship can be placed
+	} else if !fleetHaveFreeSpace("Single-deck ship", *fleet) {
+		return
+
+		//program draws specified ship on field if all validations above allows to
 	} else {
-		drawShip(newShip("Horizontal", "Three-deck ship", cell, fleet), cellArray)
-		fmt.Println("\n", fleet.Size)
-		fmt.Println(fleet.Array)
-		fmt.Println(fleet.TotalDecks)
+		drawShip(newShip("Horizontal", "Single-deck ship", cell, fleet), cellArray)
 	}
 }
 
@@ -332,18 +332,30 @@ func drawShip(ship Ship, cellArray *[10][10]Cell) {
 	for i := 0; i < ship.Size; i++ {
 		switch ship.Orientation {
 		case "Horizontal":
-			cellArray[x][y+i].Button.Text = "O"
+			{
+				if i == 0 {
+					cellArray[x][y+i].Button.Text = "<"
+				} else {
+					cellArray[x][y+i].Button.Text = "#"
+				}
+			}
 		case "Vertical":
-			cellArray[x+i][y].Button.Text = "O"
+			{
+				if i == 0 {
+					cellArray[x+i][y].Button.Text = "^"
+				} else {
+					cellArray[x+i][y].Button.Text = "#"
+				}
+			}
 		}
 	}
 }
 
 //Creates new ship with given parameter
-func newShip(orientation string, size string, cell Cell, fleet *Fleet) Ship {
+func newShip(shipOrientation string, shipSize string, cell Cell, fleet *Fleet) Ship {
 	var ship Ship
 
-	switch size {
+	switch shipSize {
 	case "Single-deck ship":
 		ship.Size = 1
 	case "Double-deck ship":
@@ -355,9 +367,9 @@ func newShip(orientation string, size string, cell Cell, fleet *Fleet) Ship {
 	}
 
 	ship.BaseDeckPosition = [2]int{cell.X, cell.Y}
-	ship.Orientation = orientation
+	ship.Orientation = shipOrientation
 
-	fleet.Size[size] += 1
+	fleet.Size[shipSize] += 1
 	fleet.TotalDecks += ship.Size
 	fleet.Array = append(fleet.Array, ship)
 
@@ -380,8 +392,9 @@ func (cell Cell) cellsAroundAreClear(cellArray *[10][10]Cell) bool {
 				continue
 			}
 
-			//false returns if atleast one of corners around cell have "O" text
-			if cellArray[cell.X+x][cell.Y+y].Button.Text == "O" {
+			//false returns if atleast one of cells around hit cell have "#" or "<" or "^" text
+			text := cellArray[cell.X+x][cell.Y+y].Button.Text
+			if text == "#" || text == "^" || text == "<" {
 				return false
 			}
 		}
@@ -390,8 +403,9 @@ func (cell Cell) cellsAroundAreClear(cellArray *[10][10]Cell) bool {
 	return true
 }
 
-//Validation method. Returns true if ship collided something, and false if ship not
-func (cell Cell) shipCollided(cellArray *[10][10]Cell, shipSize string, shipOrientation string) bool {
+//Validation method. Returns false if ship collided something,
+//and true if ship doesn't and can be placed in area
+func (cell Cell) shipCollision(cellArray *[10][10]Cell, shipSize string, shipOrientation string) bool {
 	var size int
 
 	switch shipSize {
@@ -406,13 +420,52 @@ func (cell Cell) shipCollided(cellArray *[10][10]Cell, shipSize string, shipOrie
 	}
 
 	var validationResult bool
-	for i := 1; i < size; i++ {
+	for i := 0; i < size; i++ {
 		if shipOrientation == "Vertical" {
-			validationResult = cellArray[cell.X+i][cell.Y].cellsAroundAreClear(cellArray)
+			if cell.X+i <= 9 {
+				validationResult = cellArray[cell.X+i][cell.Y].cellsAroundAreClear(cellArray)
+			} else {
+				validationResult = false
+			}
 		} else if shipOrientation == "Horizontal" {
-			validationResult = cellArray[cell.X][cell.Y+i].cellsAroundAreClear(cellArray)
+			if cell.Y+i <= 9 {
+				validationResult = cellArray[cell.X][cell.Y+i].cellsAroundAreClear(cellArray)
+			} else {
+				validationResult = false
+			}
+		}
+
+		if validationResult == false {
+			break
 		}
 	}
 
-	return false || !validationResult
+	return validationResult
+}
+
+//Validation method. Returns true if number of existing ships
+//with same size is not greater than maximum amount.
+//Return false if there are no free space in fleet's
+//'Size map[string]int' or if error occured
+func fleetHaveFreeSpace(shipSize string, fleet Fleet) bool {
+	var maxAmount int //used to contain maximum number for specified type of ship
+
+	switch shipSize {
+	case "Single-deck ship":
+		maxAmount = 4
+	case "Double-deck ship":
+		maxAmount = 3
+	case "Three-deck ship":
+		maxAmount = 2
+	case "Four-deck ship":
+		maxAmount = 1
+	default: //default used if something go wrong with value of ship's size
+		return false
+	}
+
+	if fleet.Size[shipSize] < maxAmount {
+		return true
+	}
+
+	return false
 }
