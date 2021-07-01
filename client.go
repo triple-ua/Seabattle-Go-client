@@ -110,22 +110,22 @@ func newMainContainer(window fyne.Window) {
 	userContainer := container.NewAdaptiveGrid(10)
 	userContainer.Resize(fyne.NewSize(250, 250))
 
-	shipsRadioGroup := widget.NewRadioGroup(
+	shipsSize := widget.NewRadioGroup(
 		[]string{"Single-deck ship", "Double-deck ship", "Three-deck ship", "Four-deck ship"},
 		func(s string) {})
 	shipsOrientation := widget.NewRadioGroup(
 		[]string{"Horizontal", "Vertical"},
 		func(s string) {})
-	shipsRadioGroup.SetSelected("Four-deck ship")
+	shipsSize.SetSelected("Four-deck ship")
 	shipsOrientation.SetSelected("Vertical")
-	shipsContainer := container.NewVBox(shipsRadioGroup, widget.NewSeparator(), shipsOrientation)
+	shipsContainer := container.NewVBox(shipsSize, widget.NewSeparator(), shipsOrientation)
 
-	userCellArray := setButtons(userContainer, "putShip", [10][10]string{}, &fleet)
+	userCellArray := setButtons(userContainer, "putShip", [10][10]string{},
+		&fleet, shipsOrientation, shipsSize)
 
 	//When the button is clicked, it sends POST request to create new game room
 	startGameButton := widget.NewButton("Start game", func() {
 		if fleet.TotalDecks == 20 {
-			//response := sendRequest("GET", "http://localhost:8080/?gameid=AA22DD5511", nil)
 			response := sendRequest("GET", "http://localhost:8080/game", nil)
 			err := json.Unmarshal([]byte(response), &gameData)
 
@@ -142,7 +142,7 @@ func newMainContainer(window fyne.Window) {
 				newGameContainer(window, gameData, buttonValuesArray)
 			}
 		} else {
-			fmt.Println("Your ships set uncorrectly")
+			fmt.Println("\nYour fleet is not complete")
 		}
 	})
 	startGameButton.Resize(fyne.NewSize(150, 50))
@@ -180,9 +180,9 @@ func newGameContainer(window fyne.Window, gameData GameData, buttonValuesArray [
 	player2Label.Move(fyne.NewPos(fieldSize+100, 30))
 
 	//Setting cells in fields
-	//userCellArray := setButtons(userContainer, "", buttonValuesArray)
-	//botCellArray := setButtons(botContainer, "shoot", [10][10]string{})
-	//fmt.Sprintf("%s", botCellArray, userCellArray)
+	userCellArray := setButtons(userContainer, "", buttonValuesArray, nil, nil, nil)
+	botCellArray := setButtons(botContainer, "shoot", [10][10]string{}, nil, nil, nil)
+	fmt.Sprintf("%s", botCellArray, userCellArray)
 
 	endGameButton := widget.NewButton("End game", func() {
 		newMainContainer(window)
@@ -217,8 +217,9 @@ func newWindow() fyne.Window {
 }
 
 //Sets cells on container. Parameter 'field' determines on which field cells should be set
-//func setButtons(container *fyne.Container, handler func(), initTextValues [10][10]string) [10][10]Cell {
-func setButtons(container *fyne.Container, listener string, initTextValues [10][10]string, fleet *Fleet) [10][10]Cell {
+func setButtons(container *fyne.Container, listener string, initTextValues [10][10]string,
+	fleet *Fleet, shipOrientation *widget.RadioGroup, shipSize *widget.RadioGroup) [10][10]Cell {
+
 	var cellArray [10][10]Cell = [10][10]Cell{}
 
 	for x := 0; x < 10; x++ {
@@ -231,7 +232,9 @@ func setButtons(container *fyne.Container, listener string, initTextValues [10][
 			cell.Button = widget.NewButton(initTextValues[x][y], func() {
 				switch listener {
 				case "putShip":
-					putShip(&cellArray, cell, fleet)
+					validateAreaForShip(&cellArray, cell, fleet,
+						shipOrientation.Selected, shipSize.Selected)
+
 					container.Refresh()
 				case "shoot":
 					//PUT request
@@ -254,30 +257,48 @@ func setButtons(container *fyne.Container, listener string, initTextValues [10][
 	return cellArray
 }
 
-//Puts a piece of ship in pressed cell if this cell is valid
-func putShip(cellArray *[10][10]Cell, cell Cell, fleet *Fleet) {
+//Validates area for supposed ship. Each stage has it's own job: to check if ship
+//collides another ship or field borders; or to check if fleet have empty space for
+//supposed ship. Also method can delete existing ship if user hits cell, which is base
+//deck of existing ship.
+//func validateAreaForShip(cellArray *[10][10]Cell, cell Cell, fleet *Fleet) {
+func validateAreaForShip(cellArray *[10][10]Cell, cell Cell,
+	fleet *Fleet, shipOrientation string, shipSize string) {
+
+	//terminate method if something gone wrong with ship's parameters
+	if shipOrientation == "" || shipSize == "" {
+		fmt.Println("\nSize and orientation values are empty")
+		return
+	}
 
 	//delete ship if pressed cell is BaseDeck (left/top piece of ship)
 	//if pressed cell have "#" text but it is not BaseDeck, call will be ignored
 	if cell.Button.Text == "^" || cell.Button.Text == "<" {
 		eraseShip(cell, cellArray, fleet)
+		fmt.Println("\nTest: Erase branch")
 		return
 
 		//check if supposed ship colliding something
 		//if branch - ship collided something; terminate method
 		//else branch - cell around supposed ship are clear; next validation stage
-	} else if !cell.shipCollision(cellArray, "Single-deck ship", "Horizontal") {
+		//Backup params: cellArray, "Single-deck ship", "Horizontal"
+	} else if !cell.shipCollision(cellArray, shipSize, shipOrientation) {
+		fmt.Println("\nTest: Collision error")
 		return
 
 		//check if fleet have free space for supposed ship
 		//if branch - there aren't free space; terminate method
 		//else branch - there free space; ship can be placed
-	} else if !fleetHaveFreeSpace("Single-deck ship", *fleet) {
+		//Backup params: "Single-deck ship", *fleet
+	} else if !fleetHaveFreeSpace(shipSize, *fleet) {
+		fmt.Println("\nTest: Fleet free space error")
 		return
 
 		//program draws specified ship on field if all validations above allows to
+		//Backup params: "Horizontal", "Single-deck ship", cell, fleet), cellArray
 	} else {
-		drawShip(newShip("Horizontal", "Single-deck ship", cell, fleet), cellArray)
+		fmt.Println("\nTest: Draw branch")
+		drawShip(newShip(shipOrientation, shipSize, cell, fleet), cellArray)
 	}
 }
 
@@ -407,6 +428,7 @@ func (cell Cell) cellsAroundAreClear(cellArray *[10][10]Cell) bool {
 //and true if ship doesn't and can be placed in area
 func (cell Cell) shipCollision(cellArray *[10][10]Cell, shipSize string, shipOrientation string) bool {
 	var size int
+	var validationResult bool
 
 	switch shipSize {
 	case "Single-deck ship":
@@ -419,7 +441,6 @@ func (cell Cell) shipCollision(cellArray *[10][10]Cell, shipSize string, shipOri
 		size = 4
 	}
 
-	var validationResult bool
 	for i := 0; i < size; i++ {
 		if shipOrientation == "Vertical" {
 			if cell.X+i <= 9 {
