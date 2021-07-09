@@ -45,6 +45,8 @@ type Fleet struct {
 	Array      []Ship
 }
 
+var serverUri string = "http://192.168.1.149:8080/"
+
 var gameData GameData
 var fleet Fleet = Fleet{
 	Size: make(map[string]int, 4),
@@ -128,12 +130,13 @@ func newMainContainer(window fyne.Window) {
 	//When the button is clicked, it sends POST request to create new game room
 	startGameButton := widget.NewButton("Start game", func() {
 		if fleet.TotalDecks == 20 && usernameEntry.Text != "" {
-			response := sendRequest("POST", "http://localhost:8080/", usernameEntry.Text)
+			response := sendRequest("POST", serverUri, usernameEntry.Text)
 
 			if err := json.Unmarshal(response, &gameData); err != nil {
 				fmt.Println(err)
 			} else {
-				newGameContainer(window, gameData, fleet)
+				//newGameContainer(window, gameData, fleet)
+				newGameContainer(window)
 			}
 		} else if fleet.TotalDecks < 20 {
 			fmt.Println("\nYour fleet is not complete")
@@ -159,13 +162,15 @@ func newMainContainer(window fyne.Window) {
 	shipsContainer.Move(fyne.NewPos(30, userContainer.Position().Y))
 	randomShipButton.Move(fyne.NewPos(500, userContainer.Position().Y))
 
+	mainContainer.Refresh()
 	window.SetContent(mainContainer)
 	window.SetTitle("Sea Battle")
 }
 
 //Initializes new game container, which contains game details: both user and bot field,
 //'End game' button (for yet), to close current game and open new main container
-func newGameContainer(window fyne.Window, gameData GameData, fleet Fleet) {
+//func newGameContainer(window fyne.Window, gameData GameData, fleet Fleet) {
+func newGameContainer(window fyne.Window) {
 	//Size of cell fields depends on size of window
 	fieldSize := window.Canvas().Size().Width/2 - 75
 
@@ -184,15 +189,16 @@ func newGameContainer(window fyne.Window, gameData GameData, fleet Fleet) {
 
 	//Setting cells in fields
 	userCellArray := setButtons(userContainer, "", nil, nil, nil)
-	botCellArray := setButtons(botContainer, "shoot", nil, nil, nil)
-	fmt.Sprintf("%s", botCellArray, userCellArray)
+	_ = setButtons(botContainer, "shoot", nil, nil, nil)
 
 	for _, ship := range fleet.Array {
 		drawShip(ship, &userCellArray)
 	}
 
 	endGameButton := widget.NewButton("End game", func() {
-		sendRequest("DELETE", "http://localhost:8080/game", gameData.GameID)
+		sendRequest("DELETE", serverUri, gameData.GameID)
+		gameData = GameData{}
+		fleet = Fleet{Size: make(map[string]int, 4)}
 		newMainContainer(window)
 	})
 	endGameButton.Move(fyne.NewPos(window.Canvas().Size().Width/2-50, window.Canvas().Size().Height-100))
@@ -278,11 +284,10 @@ func analyzeResponse(cellArray *[10][10]Cell, cell *Cell) {
 	}
 }
 
+//Covers empty cells with "*" text around whole ship when user kills it
 func coverKilledShip(cellArray *[10][10]Cell, cell *Cell) {
 	shipOrientation := getKilledShipOrientation(cellArray, cell)
 	decksBehind, decksInFront := getKilledShipSize(cellArray, cell, shipOrientation)
-
-	fmt.Println("Orientation:", shipOrientation, "InFront:", decksInFront, "Behind:", decksBehind)
 
 	coverOneDeck(cellArray, cell.X, cell.Y)
 
@@ -303,7 +308,6 @@ func coverKilledShip(cellArray *[10][10]Cell, cell *Cell) {
 			coverOneDeck(cellArray, cell.X, cell.Y+step)
 		}
 	}
-
 }
 
 //Returns orientation of killed ship
@@ -343,20 +347,18 @@ func getKilledShipSize(cellArray *[10][10]Cell, cell *Cell, shipOrientation stri
 	var decksInFront int	//number of decks that located in front of last hit cell of killed ship
 	var decksBehind int 	//number of decks that located behind last hit cell of killed ship
 
-	for step := 1; step <= 4; step++{
-		if step == 4 {
-			break
-		}
-
+	for step := 1; step <= 3; step++ {
 		switch shipOrientation {
 			case "Vertical": {
 				if cell.X + step <= 9 {
-					if cellArray[cell.X + step][cell.Y].Button.Text == "X" {
+					if cellArray[cell.X + step][cell.Y].Button.Text == "X" &&
+					   cellArray[cell.X + step - 1][cell.Y].Button.Text == "X" {
 						decksInFront++
 					}
 				}
 				if cell.X - step >= 0 {
-					if cellArray[cell.X - step][cell.Y].Button.Text == "X" {
+					if cellArray[cell.X - step][cell.Y].Button.Text == "X" &&
+					   cellArray[cell.X - step + 1][cell.Y].Button.Text == "X"{
 						decksBehind++
 					}
 				}
@@ -364,12 +366,14 @@ func getKilledShipSize(cellArray *[10][10]Cell, cell *Cell, shipOrientation stri
 			
 			case "Horizontal": {
 				if cell.Y + step <= 9 {
-					if cellArray[cell.X][cell.Y + step].Button.Text == "X" {
+					if cellArray[cell.X][cell.Y + step].Button.Text == "X" && 
+					   cellArray[cell.X][cell.Y + step - 1].Button.Text == "X"{
 						decksInFront++
 					}
 				}
 				if cell.Y - step >= 0 {
-					if cellArray[cell.X][cell.Y - step].Button.Text == "X" {
+					if cellArray[cell.X][cell.Y - step].Button.Text == "X" &&
+					   cellArray[cell.X][cell.Y - step + 1].Button.Text == "X" {
 						decksBehind++
 					}
 				}
@@ -392,8 +396,10 @@ func coverOneDeck(cellArray *[10][10]Cell, cellX int, cellY int) {
 			}
 
 			if x == 0 && y == 0 {
-				cellArray[cellX+x][cellY+y].Button.Text = "X"
-			} else if cellArray[cellX+x][cellY+y].Button.Text != "X" {
+				continue
+			} 
+			
+			if cellArray[cellX+x][cellY+y].Button.Text != "X" {
 				cellArray[cellX+x][cellY+y].Button.Text = "*"
 			}
 		}
@@ -405,7 +411,7 @@ func coverOneDeck(cellArray *[10][10]Cell, cellX int, cellY int) {
 func shoot(cell Cell, cellArray [10][10]Cell) {
 	gameData.UserX = cell.X
 	gameData.UserY = cell.Y
-	response := sendRequest("PUT", "http://localhost:8080/game", gameData)
+	response := sendRequest("PUT", serverUri, gameData)
 
 	//Unmarshal received data from PUT request
 	if err := json.Unmarshal(response, &gameData); err != nil {
