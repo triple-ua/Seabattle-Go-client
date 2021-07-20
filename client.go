@@ -17,14 +17,16 @@ import (
 
 //GameData represents data received from server
 type GameData struct {
-	GameID     string
-	Player1    string
-	Player2    string
-	ShotStatus string
-	UserX      int
-	UserY      int
-	BotX       int
-	BotY       int
+	GameID       string
+	Player1      string
+	Player2   	 string
+	UserLastShot string
+	BotLastShot  string
+	UserX     	 int
+	UserY     	 int
+	BotX      	 int
+	BotY      	 int
+	Turn		 string
 }
 
 type Cell struct {
@@ -37,6 +39,7 @@ type Ship struct {
 	Size             int
 	Orientation      string
 	BaseDeckPosition [2]int //position of top/left corner of ship
+	DecksAlive 		 int
 }
 
 type Fleet struct {
@@ -51,6 +54,9 @@ var gameData GameData
 var fleet Fleet = Fleet{
 	Size: make(map[string]int, 4),
 }
+var userCellArray [10][10]Cell = [10][10]Cell {}
+var botCellArray [10][10]Cell = [10][10]Cell {}
+
 
 func main() {
 	initGUI()
@@ -188,8 +194,8 @@ func newGameContainer(window fyne.Window) {
 	player2Label.Move(fyne.NewPos(fieldSize+100, 30))
 
 	//Setting cells in fields
-	userCellArray := setButtons(userContainer, "", nil, nil, nil)
-	_ = setButtons(botContainer, "shoot", nil, nil, nil)
+	userCellArray = setButtons(userContainer, "", nil, nil, nil)
+	botCellArray = setButtons(botContainer, "shoot", nil, nil, nil)
 
 	for _, ship := range fleet.Array {
 		drawShip(ship, &userCellArray)
@@ -199,6 +205,8 @@ func newGameContainer(window fyne.Window) {
 		sendRequest("DELETE", serverUri, gameData.GameID)
 		gameData = GameData{}
 		fleet = Fleet{Size: make(map[string]int, 4)}
+		userCellArray = [10][10]Cell {}
+		botCellArray = [10][10]Cell {}
 		newMainContainer(window)
 	})
 	endGameButton.Move(fyne.NewPos(window.Canvas().Size().Width/2-50, window.Canvas().Size().Height-100))
@@ -253,10 +261,18 @@ func setButtons(container *fyne.Container, listener string, fleet *Fleet,
 					container.Refresh()
 				case "shoot":
 					if cell.Button.Text == "" {
-						shoot(cell, cellArray)
-						analyzeResponse(&cellArray, &cell)
-	
-						container.Refresh()
+						fmt.Println("\n\n\n")
+						for i := 1;; i++ {
+							
+							shoot(cell, cellArray)
+							analyzeResponse()
+		
+							container.Refresh()
+							
+							fmt.Println(gameData)
+							
+							if gameData.Turn == "user" { break }
+						}
 					} else {
 						fmt.Println("\nYou were shooting this cell already")
 					}
@@ -271,20 +287,105 @@ func setButtons(container *fyne.Container, listener string, fleet *Fleet,
 	return cellArray
 }
 
-//Analyzes response from server and draws true data on bot's field
-func analyzeResponse(cellArray *[10][10]Cell, cell *Cell) {
-	switch gameData.ShotStatus {
+func analyzeResponse() {
+	switch gameData.UserLastShot {
 	case "miss":
-		cell.Button.Text = "*"
+		botCellArray[gameData.UserX][gameData.UserY].Button.Text = "*"
 	case "hit":
-		cell.Button.Text = "X"
+		botCellArray[gameData.UserX][gameData.UserY].Button.Text = "X"
 	case "kill":
-		cell.Button.Text = "X"
-		coverKilledShip(cellArray, cell)
+		botCellArray[gameData.UserX][gameData.UserY].Button.Text = "X"
+		coverKilledShip(&botCellArray, &botCellArray[gameData.UserX][gameData.UserY])
+	}
+
+	if gameData.Turn == "bot" {
+		analyzeBotShot(&gameData, &fleet)
+
+		switch gameData.BotLastShot {
+		case "miss":
+			userCellArray[gameData.BotX][gameData.BotY].Button.Text = "*"
+		case "hit":
+			userCellArray[gameData.BotX][gameData.BotY].Button.Text = "X"
+		case "kill":
+			userCellArray[gameData.BotX][gameData.BotY].Button.Text = "X"
+			coverKilledShip(&userCellArray, &userCellArray[gameData.BotX][gameData.BotY])
+		}
+
+		userCellArray[gameData.BotX][gameData.BotY].Button.Refresh()
 	}
 }
 
-//Covers empty cells with "*" text around whole ship when user kills it
+//Returns true if ship killed and false if ship still alive
+func isShipKilled(ship Ship) bool {
+	return ship.DecksAlive == 0
+}
+
+//Returns true if bot hit user's ship, false if not
+func isShipHit(ship Ship, botX int, botY int) bool {
+	shipX := ship.BaseDeckPosition[0]
+	shipY := ship.BaseDeckPosition[1]
+
+	for i := 0; i < ship.Size; i++ {
+		switch ship.Orientation {
+		case "Vertical":
+			if shipX+i == botX && shipY == botY {
+				return true
+			}
+		case "Horizontal":
+			if shipX == botX && shipY+i == botY {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+//Edits fleet and ship parameters when user hit or kill ship
+func editFleet(ship *Ship, fleet *Fleet) {
+	ship.DecksAlive--
+	fleet.TotalDecks--
+
+	//Replacing edited ship in slice
+	shipArrayCopy := fleet.Array
+	fleet.Array = nil
+	for _, s := range shipArrayCopy {
+		if s.BaseDeckPosition == ship.BaseDeckPosition {
+			fleet.Array = append(fleet.Array, *ship)
+		} else {
+			fleet.Array = append(fleet.Array, s)
+		}
+	}
+}
+
+//Analyzes bot shot. Sets variables gameData.Turn and gameData.BotLastShot
+func analyzeBotShot(gameData *GameData, fleet *Fleet) {
+	x := gameData.BotX
+	y := gameData.BotY
+
+	for _, ship := range fleet.Array {
+		if isShipHit(ship, x, y) {
+			fmt.Println(ship)
+			fmt.Println("\tBot hit user's ship")
+			editFleet(&ship, fleet)
+			
+			if isShipKilled(ship) {
+				fmt.Println("\tBot killed user's ship")
+				gameData.Turn = "bot";
+				gameData.BotLastShot = "kill"
+				return
+			}
+			gameData.Turn = "bot";
+			gameData.BotLastShot = "hit"
+			return
+		}
+	}
+	fmt.Println("\tBot missed")
+	gameData.Turn = "user";
+	gameData.BotLastShot = "miss"
+}
+
+//Covers empty cells with "*" text around whole ship when player kills it
 func coverKilledShip(cellArray *[10][10]Cell, cell *Cell) {
 	shipOrientation := getKilledShipOrientation(cellArray, cell)
 	decksBehind, decksInFront := getKilledShipSize(cellArray, cell, shipOrientation)
@@ -315,24 +416,28 @@ func getKilledShipOrientation(cellArray *[10][10]Cell, cell *Cell) string {
 	if cell.cellsAroundAreClear(cellArray) {
 		return "Single-deck ship"
 	}
-
+	
 	if cell.X + 1 <= 9 {
-		if cellArray[cell.X+1][cell.Y].Button.Text == "X" {
+		textBelow := cellArray[cell.X+1][cell.Y].Button.Text
+		if textBelow == "X" || textBelow == "#" || textBelow == "<" || textBelow == "^" {
 			return "Vertical"
 		}
 	}
 	if cell.X - 1 >= 0 {
-		if cellArray[cell.X-1][cell.Y].Button.Text == "X" {
+		textAbove := cellArray[cell.X-1][cell.Y].Button.Text
+		if textAbove == "X" || textAbove == "#" || textAbove == "<" || textAbove == "^" {
 			return "Vertical"
 		}
 	}
 	if cell.Y + 1 <= 9 {
-		if cellArray[cell.X][cell.Y+1].Button.Text == "X" {
+		textRight := cellArray[cell.X][cell.Y+1].Button.Text
+		if textRight == "X" || textRight == "#" || textRight == "<" || textRight == "^" {
 			return "Horizontal"
 		}
-	} 
+	}
 	if cell.Y - 1 >= 0 {
-		if cellArray[cell.X][cell.Y-1].Button.Text == "X" {
+		textLeft  := cellArray[cell.X][cell.Y-1].Button.Text
+		if textLeft == "X" || textLeft == "#" || textLeft == "<" || textLeft == "^" {
 			return "Horizontal"
 		}
 	}
@@ -347,34 +452,56 @@ func getKilledShipSize(cellArray *[10][10]Cell, cell *Cell, shipOrientation stri
 	var decksInFront int	//number of decks that located in front of last hit cell of killed ship
 	var decksBehind int 	//number of decks that located behind last hit cell of killed ship
 
+	var checkBehind bool 	= true	//'true' - program checks for decks behind; 'false' - no
+	var checkInFront bool 	= true	//'true' - program checks for decks if front; 'false' - no
 	for step := 1; step <= 3; step++ {
 		switch shipOrientation {
 			case "Vertical": {
-				if cell.X + step <= 9 {
-					if cellArray[cell.X + step][cell.Y].Button.Text == "X" &&
-					   cellArray[cell.X + step - 1][cell.Y].Button.Text == "X" {
+				if cell.X + step <= 9 && checkInFront {
+					if (cellArray[cell.X + step][cell.Y].Button.Text != "*" &&
+						cellArray[cell.X + step - 1][cell.Y].Button.Text != "*") &&
+					   (cellArray[cell.X + step][cell.Y].Button.Text != "" &&
+					   cellArray[cell.X + step - 1][cell.Y].Button.Text != "") {
+				
 						decksInFront++
+					} else {
+						checkInFront = false
 					}
 				}
-				if cell.X - step >= 0 {
-					if cellArray[cell.X - step][cell.Y].Button.Text == "X" &&
-					   cellArray[cell.X - step + 1][cell.Y].Button.Text == "X"{
+				if cell.X - step >= 0 && checkBehind {
+					if (cellArray[cell.X - step][cell.Y].Button.Text != "*" &&
+					   cellArray[cell.X - step + 1][cell.Y].Button.Text != "*") &&
+					   (cellArray[cell.X - step][cell.Y].Button.Text != "" &&
+					   cellArray[cell.X - step + 1][cell.Y].Button.Text != "") {
+					
 						decksBehind++
+					} else {
+						checkBehind = false
 					}
 				}
 			}
 			
 			case "Horizontal": {
-				if cell.Y + step <= 9 {
-					if cellArray[cell.X][cell.Y + step].Button.Text == "X" && 
-					   cellArray[cell.X][cell.Y + step - 1].Button.Text == "X"{
+				if cell.Y + step <= 9 && checkInFront {
+					if (cellArray[cell.X][cell.Y + step].Button.Text != "*" &&  
+					   cellArray[cell.X][cell.Y + step - 1].Button.Text != "*") &&
+					   (cellArray[cell.X][cell.Y + step].Button.Text != "" && 
+					   cellArray[cell.X][cell.Y + step - 1].Button.Text != "") {
+					
 						decksInFront++
+					} else {
+						checkInFront = false
 					}
 				}
-				if cell.Y - step >= 0 {
-					if cellArray[cell.X][cell.Y - step].Button.Text == "X" &&
-					   cellArray[cell.X][cell.Y - step + 1].Button.Text == "X" {
+				if cell.Y - step >= 0 && checkBehind {
+					if (cellArray[cell.X][cell.Y - step].Button.Text != "*" &&
+					   cellArray[cell.X][cell.Y - step + 1].Button.Text != "*") &&
+					   (cellArray[cell.X][cell.Y - step].Button.Text != "" &&
+					   cellArray[cell.X][cell.Y - step + 1].Button.Text != "") {
+				
 						decksBehind++
+					} else {
+						checkBehind = false
 					}
 				}
 			}
@@ -399,9 +526,14 @@ func coverOneDeck(cellArray *[10][10]Cell, cellX int, cellY int) {
 				continue
 			} 
 			
-			if cellArray[cellX+x][cellY+y].Button.Text != "X" {
+			if cellArray[cellX+x][cellY+y].Button.Text != "X" &&
+			   cellArray[cellX+x][cellY+y].Button.Text != "<" &&
+			   cellArray[cellX+x][cellY+y].Button.Text != "^" {
+
 				cellArray[cellX+x][cellY+y].Button.Text = "*"
 			}
+
+			cellArray[cellX+x][cellY+y].Button.Refresh()
 		}
 	}
 }
@@ -416,8 +548,6 @@ func shoot(cell Cell, cellArray [10][10]Cell) {
 	//Unmarshal received data from PUT request
 	if err := json.Unmarshal(response, &gameData); err != nil {
 		fmt.Println(err)
-	} else {
-		fmt.Println(gameData)
 	}
 }
 
@@ -610,6 +740,7 @@ func newShip(shipOrientation string, shipSize string, cell Cell, fleet *Fleet) S
 
 	ship.BaseDeckPosition = [2]int{cell.X, cell.Y}
 	ship.Orientation = shipOrientation
+	ship.DecksAlive = ship.Size
 
 	fleet.Size[shipSize] += 1
 	fleet.TotalDecks += ship.Size
